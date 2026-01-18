@@ -8,6 +8,11 @@ Paper2Exp は、論文参照（arXiv / HF Papers）から再現実験用のラ�
 pip install -e .
 ```
 
+## 対応環境
+
+- Python 3.11 以上
+- macOS / Linux
+
 ## クイックスタート
 
 ### 従来互換（no-exec）
@@ -97,11 +102,58 @@ LLM/エージェント関連フラグ:
 - ネットワークアクセスは `--allow-network` が明示されたときのみ
 - 破壊的コマンドは実行しません
 
+## run ディレクトリ例
+
+```
+runs/YYYYMMDD_HHMMSS_2511.14460/
+├── paper/
+│   └── metadata.json
+├── repro/
+│   ├── spec.yaml
+│   ├── run.sh
+│   ├── results.jsonl
+│   └── compare.md
+├── bench/
+│   ├── report.md
+│   └── results.json
+├── repo/
+│   ├── candidates.json
+│   ├── validation.json
+│   └── selection.json
+├── summary.md
+└── logs/
+```
+
+summary.md の一例（実行内容によって変化します）:
+
+```
+# Run Summary
+
+Paper: arxiv:2511.14460
+Title:
+
+## Status
+- repo_cloned: False
+- repro_executed: False
+- repro_verified: None
+```
+
 ## Troubleshooting（よくある詰まり）
 
 - GitHub認証が必要: `could not read Username for 'https://github.com'`
 - DNS/ネットワークでpipが失敗: `could not resolve host`
 - pytestが無い: `No module named pytest`
+
+## オフライン運用（wheelhouse）
+
+ネットワークが使えない環境では、事前に wheelhouse を用意すると
+`pytest` などの導入をオフラインで試行できます。
+
+```
+export PAPER2EXP_WHEELHOUSE=/path/to/wheels
+```
+
+この場合、`--allow-package-install` を指定すれば wheelhouse から導入を試みます。
 
 ## paper-only（参照モード）
 
