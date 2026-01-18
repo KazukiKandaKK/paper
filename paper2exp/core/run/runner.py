@@ -15,7 +15,7 @@ class Runner:
     no_exec: bool = False
     counter: int = 0
 
-    def run(self, command: Sequence[str], cwd: Path) -> dict:
+    def run(self, command: Sequence[str], cwd: Path, timeout_sec: float | None = None) -> dict:
         self.counter += 1
         start = now_unix()
         record = {
@@ -46,13 +46,32 @@ class Runner:
             append_jsonl(self.results_path, record)
             return record
 
+        exit_code = None
+        status = "ran"
         with stdout_path.open("w", encoding="utf-8") as out_f, stderr_path.open(
             "w", encoding="utf-8"
         ) as err_f:
-            proc = subprocess.Popen(
-                list(command), cwd=str(cwd), stdout=out_f, stderr=err_f, text=True
-            )
-            exit_code = proc.wait()
+            if timeout_sec is None:
+                proc = subprocess.Popen(
+                    list(command), cwd=str(cwd), stdout=out_f, stderr=err_f, text=True
+                )
+                exit_code = proc.wait()
+            else:
+                try:
+                    completed = subprocess.run(
+                        list(command),
+                        cwd=str(cwd),
+                        stdout=out_f,
+                        stderr=err_f,
+                        text=True,
+                        timeout=timeout_sec,
+                    )
+                    exit_code = completed.returncode
+                except subprocess.TimeoutExpired:
+                    status = "timeout"
+                    exit_code = None
+                    err_f.write("TIMEOUT\n")
+                    err_f.flush()
 
         end = now_unix()
         stdout_tail = ""
@@ -70,6 +89,7 @@ class Runner:
                 "stderr_path": str(stderr_path),
                 "stdout_tail": stdout_tail,
                 "stderr_tail": stderr_tail,
+                "status": status,
             }
         )
         append_jsonl(self.results_path, record)

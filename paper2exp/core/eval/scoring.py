@@ -19,9 +19,16 @@ def load_last_result(results_path: Path) -> dict | None:
     return last
 
 
-def write_compare(spec: ExperimentSpec, run_dir: Path, rerun_ok: bool | None) -> dict:
+def write_compare(
+    spec: ExperimentSpec,
+    run_dir: Path,
+    rerun_ok: bool | None,
+    exec_ok_override: bool | None = None,
+) -> dict:
     last = load_last_result(run_dir / "repro" / "results.jsonl")
     exec_ok = bool(last and last.get("exit_code") == 0)
+    if exec_ok_override is not None:
+        exec_ok = bool(exec_ok_override)
     format_ok = True
     compare = {
         "format_ok": format_ok,

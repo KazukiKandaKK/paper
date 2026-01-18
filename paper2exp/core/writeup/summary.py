@@ -12,6 +12,13 @@ def write_summary(
     exec_ok: bool,
     repo_ok: bool,
     notes: str = "",
+    repro_executed: bool | None = None,
+    repro_verified: bool | None = None,
+    paper_to_code_generated: bool | None = None,
+    repro_status: str | None = None,
+    repro_reason: str | None = None,
+    maturity_level: str | None = None,
+    maturity_reason: str | None = None,
 ) -> None:
     run_rel = Path("runs") / run_dir.name
     lines = ["# Run Summary", ""]
@@ -20,10 +27,31 @@ def write_summary(
     lines.append("")
     lines.append("## Status")
     lines.append(f"- repo_cloned: {repo_ok}")
-    lines.append(f"- exec_ok: {exec_ok}")
+    if repro_executed is not None:
+        lines.append(f"- repro_executed: {repro_executed}")
+    if repro_verified is not None or repro_executed is not None:
+        lines.append(f"- repro_verified: {repro_verified}")
+    if paper_to_code_generated is not None:
+        lines.append(f"- paper_to_code_generated: {paper_to_code_generated}")
+    lines.append(f"- exec_ok: {exec_ok} (deprecated; use repro_verified)")
     if notes:
         lines.append(f"- notes: {notes}")
     lines.append("")
+    if repro_status or repro_reason:
+        lines.append("## Repro status")
+        lines.append(
+            f"Official reproduction: {repro_status or 'UNKNOWN'}"
+        )
+        if repro_reason:
+            lines.append(f"Reason: {repro_reason}")
+        lines.append("")
+    if maturity_level or maturity_reason:
+        lines.append("## Maturity")
+        if maturity_level:
+            lines.append(f"- level: {maturity_level}")
+        if maturity_reason:
+            lines.append(f"- reason: {maturity_reason}")
+        lines.append("")
     lines.append("## Paths")
     lines.append(f"- paper: {run_rel / 'paper'}")
     lines.append(f"- repro: {run_rel / 'repro'}")

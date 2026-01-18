@@ -10,10 +10,20 @@ import yaml
 from paper2exp.core.acquire.repo import clone_repo
 from paper2exp.core.build.env import build_env, venv_python
 from paper2exp.core.eval.scoring import load_last_result, write_compare
+from paper2exp.core.insights.maturity import compute_maturity
+from paper2exp.core.insights.runner import run_insights
+from paper2exp.core.run.status import compute_repro_status
 from paper2exp.core.ingest.arxiv import parse_arxiv_id
 from paper2exp.core.ingest.service import ingest_paper
 from paper2exp.core.memory.store import record_failure
 from paper2exp.core.models import ExperimentSpec
+from paper2exp.core.repo.discovery import (
+    candidate_from_user,
+    extract_candidates_from_llm,
+    extract_candidates_from_text,
+)
+from paper2exp.core.repo.select import SelectionResult, select_repo
+from paper2exp.core.repo.validate import ValidationResult, validate_candidates
 from paper2exp.core.run.runner import Runner
 from paper2exp.core.run.smoke import select_smoke_command, write_run_script
 from paper2exp.core.understand.spec import build_experiment_spec
@@ -70,6 +80,15 @@ def run_pipeline(
     allow_network: bool = False,
     allow_package_install: bool = False,
     allow_write_repo: bool = False,
+    repo_url: str | None = None,
+    repo_strategy: str = "prefer_user_then_paper",
+    repo_validate_only: bool = False,
+    paper_to_code: bool = False,
+    repo_failure_policy: str | None = None,
+    insights: bool = False,
+    insights_lang: str = "ja",
+    insights_max_applications: int = 6,
+    insights_no_llm: bool = False,
     llm_client=None,
 ) -> Path:
     base = workdir or Path.cwd()
@@ -80,9 +99,15 @@ def run_pipeline(
     paper_dir = run_dir / "paper"
     code_dir = run_dir / "code"
     notes = ""
+    if repo_failure_policy is None:
+        repo_failure_policy = "fallback_paper_to_code" if agent else "stop"
+    if repo_failure_policy not in {"stop", "fallback_paper_to_code"}:
+        raise ValueError("invalid repo_failure_policy")
     repo_ok = False
     exec_ok = False
     spec: Optional[ExperimentSpec] = None
+    selection = SelectionResult(selected_url=None, reason="not evaluated")
+    validation_results: list[ValidationResult] = []
 
     try:
         metadata = ingest_paper(
@@ -139,11 +164,87 @@ def run_pipeline(
     spec_path = run_dir / "repro" / "spec.yaml"
     spec_path.write_text(yaml.safe_dump(spec.model_dump(), sort_keys=False), encoding="utf-8")
 
+    repo_dir = run_dir / "repo"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    candidates = _build_repo_candidates(
+        repo_url=repo_url,
+        paper_text=combined_text,
+        llm_dir=run_dir / "llm",
+    )
+    _write_candidates(repo_dir, candidates)
+
     if not no_exec and allow_network:
+        validate_urls = [cand.normalized_url for cand in candidates]
+        validation_results = validate_candidates(validate_urls, runner)
+        _write_validation(repo_dir, validation_results)
+        selection = select_repo(candidates, validation_results, repo_strategy)
+    else:
+        selection = _select_without_validation(candidates, repo_strategy)
+        _write_validation(repo_dir, [])
+
+    _write_selection(repo_dir, selection, repo_strategy)
+
+    if selection.selected_url:
+        spec.repro.repo.url = selection.selected_url
+    spec.repro.repo.candidates = [cand.normalized_url for cand in candidates[:5]]
+    spec_path.write_text(yaml.safe_dump(spec.model_dump(), sort_keys=False), encoding="utf-8")
+
+    if repo_validate_only:
+        notes = "repo validation only; skipping clone/run"
+        status = compute_repro_status(run_dir, repo_ok)
+        maturity = compute_maturity(run_dir, repo_ok, status.paper_to_code_generated)
+        write_summary(
+            run_dir,
+            spec,
+            exec_ok=status.exec_ok,
+            repo_ok=repo_ok,
+            notes=notes,
+            repro_executed=status.repro_executed,
+            repro_verified=status.repro_verified,
+            paper_to_code_generated=status.paper_to_code_generated,
+            repro_status=status.official_status,
+            repro_reason=status.reason,
+            maturity_level=maturity.level,
+            maturity_reason=maturity.reason,
+        )
+        if insights:
+            run_insights(
+                run_dir,
+                spec,
+                llm=llm,
+                llm_model=llm_model,
+                insights_lang=insights_lang,
+                insights_max_applications=insights_max_applications,
+                insights_no_llm=insights_no_llm,
+                llm_client=llm_client,
+            )
+        return run_dir
+
+    if not no_exec and allow_network and selection.selected_url:
         try:
             repo_ok = clone_repo(spec.repro.repo.url, code_dir, runner)
         except Exception as exc:
             _log_event(results_path, "acquire", "error", {"error": str(exc)})
+    elif selection.selected_url is None:
+        notes = "追試未成立: repoが検証できませんでした。"
+
+    fallback_enabled = repo_failure_policy == "fallback_paper_to_code" or paper_to_code
+    repo_unavailable = selection.selected_url is None or not repo_ok
+    if not no_exec and fallback_enabled and repo_unavailable:
+        from paper2exp.core.paper_to_code.planner import write_paper_to_code_artifacts
+
+        selection.fallback_reason = "repo validation/clone failed; fallback to paper-to-code"
+        _write_selection(repo_dir, selection, repo_strategy)
+        write_paper_to_code_artifacts(
+            run_dir,
+            paper_text=combined_text,
+            llm_response_path=run_dir / "llm" / "response.json",
+        )
+        if notes:
+            notes = f"{notes} repo検証失敗→paper-to-codeへフォールバック"
+        else:
+            notes = "repo検証失敗→paper-to-codeへフォールバック"
+        notes = f"{notes} (override: --repo-url)"
 
     try:
         venv_dir = build_env(
@@ -171,6 +272,10 @@ def run_pipeline(
         except Exception as exc:
             _log_event(results_path, "run", "error", {"error": str(exc)})
             notes = f"run failed: {exc}"
+
+    if not no_exec and (repo_failure_policy == "fallback_paper_to_code" or paper_to_code):
+        if selection.selected_url is None or not repo_ok:
+            _create_paper_to_code_skeleton(code_dir)
 
     if agent and not no_exec and llm != "none" and not exec_ok:
         from paper2exp.core.llm.agent_prompts import DEFAULT_ALLOWLIST_EXECUTABLES
@@ -227,9 +332,36 @@ def run_pipeline(
     else:
         rerun_ok = None
 
-    compare = write_compare(spec, run_dir, rerun_ok)
-    exec_ok = compare.get("exec_ok", exec_ok)
-    write_summary(run_dir, spec, exec_ok=exec_ok, repo_ok=repo_ok, notes=notes)
+    status = compute_repro_status(run_dir, repo_ok)
+    maturity = compute_maturity(run_dir, repo_ok, status.paper_to_code_generated)
+    compare = write_compare(spec, run_dir, rerun_ok, exec_ok_override=status.exec_ok)
+    exec_ok = compare.get("exec_ok", status.exec_ok)
+    write_summary(
+        run_dir,
+        spec,
+        exec_ok=exec_ok,
+        repo_ok=repo_ok,
+        notes=notes,
+        repro_executed=status.repro_executed,
+        repro_verified=status.repro_verified,
+        paper_to_code_generated=status.paper_to_code_generated,
+        repro_status=status.official_status,
+        repro_reason=status.reason,
+        maturity_level=maturity.level,
+        maturity_reason=maturity.reason,
+    )
+
+    if insights:
+        run_insights(
+            run_dir,
+            spec,
+            llm=llm,
+            llm_model=llm_model,
+            insights_lang=insights_lang,
+            insights_max_applications=insights_max_applications,
+            insights_no_llm=insights_no_llm,
+            llm_client=llm_client,
+        )
 
     return run_dir
 
@@ -259,6 +391,15 @@ def batch_run(
     allow_network: bool = False,
     allow_package_install: bool = False,
     allow_write_repo: bool = False,
+    repo_url: str | None = None,
+    repo_strategy: str = "prefer_user_then_paper",
+    repo_validate_only: bool = False,
+    paper_to_code: bool = False,
+    repo_failure_policy: str | None = None,
+    insights: bool = False,
+    insights_lang: str = "ja",
+    insights_max_applications: int = 6,
+    insights_no_llm: bool = False,
 ) -> list[Path]:
     results = []
     for paper_ref in load_seed_list(path):
@@ -275,6 +416,15 @@ def batch_run(
                 allow_network=allow_network,
                 allow_package_install=allow_package_install,
                 allow_write_repo=allow_write_repo,
+                repo_url=repo_url,
+                repo_strategy=repo_strategy,
+                repo_validate_only=repo_validate_only,
+                paper_to_code=paper_to_code,
+                repo_failure_policy=repo_failure_policy,
+                insights=insights,
+                insights_lang=insights_lang,
+                insights_max_applications=insights_max_applications,
+                insights_no_llm=insights_no_llm,
             )
         )
     return results
@@ -298,3 +448,102 @@ def _tail_lines(path: Path, max_lines: int = 10) -> str:
     if not lines:
         return ""
     return "\n".join(lines[-max_lines:])
+
+
+def _build_repo_candidates(
+    repo_url: str | None,
+    paper_text: str,
+    llm_dir: Path,
+) -> list:
+    candidates = []
+    if repo_url:
+        candidates.append(candidate_from_user(repo_url))
+    candidates.extend(extract_candidates_from_text(paper_text, source="paper_text"))
+    response_path = llm_dir / "response.json"
+    if response_path.exists():
+        try:
+            response = json.loads(response_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            response = {}
+        candidates.extend(extract_candidates_from_llm(response, paper_text))
+    # de-duplicate by normalized_url while preserving order
+    unique: list = []
+    seen: set[str] = set()
+    for cand in candidates:
+        if cand.normalized_url in seen:
+            continue
+        seen.add(cand.normalized_url)
+        unique.append(cand)
+    for idx, cand in enumerate(unique):
+        cand.priority_rank = idx
+    return unique
+
+
+def _write_candidates(repo_dir: Path, candidates: list) -> None:
+    payload = {
+        "candidates": [
+            {
+                "url": cand.url,
+                "normalized_url": cand.normalized_url,
+                "source": cand.source,
+                "priority_rank": cand.priority_rank,
+                "evidence": {
+                    "locator": cand.evidence.locator if cand.evidence else None,
+                    "quote": cand.evidence.quote if cand.evidence else None,
+                },
+            }
+            for cand in candidates
+        ]
+    }
+    (repo_dir / "candidates.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_validation(repo_dir: Path, results: list[ValidationResult]) -> None:
+    payload = {
+        "results": [
+            {
+                "url": item.url,
+                "status": item.status,
+                "stdout_tail": item.stdout_tail,
+                "stderr_tail": item.stderr_tail,
+            }
+            for item in results
+        ]
+    }
+    (repo_dir / "validation.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _write_selection(repo_dir: Path, selection: SelectionResult, strategy: str) -> None:
+    payload = {
+        "selected_url": selection.selected_url,
+        "reason": selection.reason,
+        "strategy": strategy,
+        "fallback_reason": selection.fallback_reason,
+    }
+    (repo_dir / "selection.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _select_without_validation(candidates: list, strategy: str) -> SelectionResult:
+    if candidates and candidates[0].source == "user_input":
+        return SelectionResult(
+            selected_url=candidates[0].normalized_url,
+            reason="user_input (validation skipped)",
+        )
+    return SelectionResult(selected_url=None, reason="validation skipped")
+
+
+def _create_paper_to_code_skeleton(code_dir: Path) -> None:
+    code_dir.mkdir(parents=True, exist_ok=True)
+    (code_dir / "README.md").write_text(
+        "# Minimal Paper-to-Code Skeleton\n\n"
+        "This is a minimal placeholder implementation. Details are not confirmed.\n",
+        encoding="utf-8",
+    )
+    (code_dir / "main.py").write_text(
+        "from __future__ import annotations\n\n"
+        "def main() -> None:\n"
+        "    raise SystemExit('implementation details not confirmed')\n\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n",
+        encoding="utf-8",
+    )

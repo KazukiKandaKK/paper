@@ -25,6 +25,7 @@ class GeminiVertexClient(LLMClient):
         temperature: float = 0.0,
         seed: int | None = None,
     ) -> dict:
+        schema = _sanitize_schema(schema)
         last_error: Exception | None = None
         for attempt in range(self.max_retries):
             try:
@@ -47,6 +48,15 @@ class GeminiVertexClient(LLMClient):
 
 def _build_client(timeout_sec: int) -> genai.Client:
     try:
-        return genai.Client(http_options=HttpOptions(api_version="v1", timeout=timeout_sec))
+        timeout_ms = int(timeout_sec * 1000)
+        return genai.Client(http_options=HttpOptions(api_version="v1", timeout=timeout_ms))
     except TypeError:
         return genai.Client(http_options=HttpOptions(api_version="v1"))
+
+
+def _sanitize_schema(schema: dict) -> dict:
+    if not isinstance(schema, dict):
+        return schema
+    cleaned = dict(schema)
+    cleaned.pop("$schema", None)
+    return cleaned
