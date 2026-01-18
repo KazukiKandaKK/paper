@@ -144,6 +144,31 @@ def report(run_dir: Path) -> None:
     typer.echo(f"Results: {report['results']}")
 
 
+@app.command("paper-only")
+def paper_only(
+    run: Path = typer.Option(..., "--run", exists=False, dir_okay=True),
+    lang: str = typer.Option("ja", "--lang"),
+    max_applications: int = typer.Option(6, "--max-applications"),
+    no_llm: bool = typer.Option(False, "--no-llm"),
+    llm: str = typer.Option("none", "--llm"),
+    llm_model: str = typer.Option("gemini-2.5-flash", "--llm-model"),
+) -> None:
+    """Generate paper-only facts/insights/applications from a run directory."""
+    from paper2exp.core.paper_only.runner import run_paper_only
+
+    if llm == "gemini":
+        _require_gemini_env()
+    result = run_paper_only(
+        run,
+        lang=lang,
+        max_applications=max_applications,
+        no_llm=no_llm,
+        llm=llm,
+        llm_model=llm_model,
+    )
+    typer.echo(str(result["report_path"]))
+
+
 def _require_gemini_env() -> None:
     required = [
         "GOOGLE_API_KEY",

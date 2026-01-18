@@ -20,13 +20,16 @@ paper2exp run https://arxiv.org/abs/2511.14460 --no-exec
 ### LLM補完（no-exec + PDFダウンロード）
 外部コマンド実行はせず、PDFを取得→テキスト抽出→Geminiで証拠付きパッチを生成し spec に反映します。
 
+> 注意: PDF取得および LLM 呼び出しにはネットワークアクセスが必要です。  
+> ネットワークアクセスは `--allow-network` が明示されたときのみ行います。
+
 ```bash
 export GOOGLE_API_KEY=... 
 export GOOGLE_CLOUD_PROJECT=... 
 export GOOGLE_CLOUD_LOCATION=... 
 export GOOGLE_GENAI_USE_VERTEXAI=True
 
-paper2exp run https://arxiv.org/abs/2511.14460 --no-exec --download-pdf --llm gemini
+paper2exp run https://arxiv.org/abs/2511.14460 --no-exec --download-pdf --llm gemini --allow-network
 ```
 
 ## バッチ実行
@@ -60,6 +63,7 @@ LLM を使用した場合は監査用に `runs/.../llm/` が追加されます�
 - `paper2exp run <paper_ref> [--workdir <path>] [--mode smoke|repro] [--no-exec]`
 - `paper2exp batch <config.yaml> [--no-exec]`
 - `paper2exp report <run_dir>`
+- `paper2exp paper-only --run <run_dir> [--lang ja|en] [--max-applications 6] [--no-llm] [--llm gemini]`
 
 LLM/エージェント関連フラグ:
 
@@ -69,6 +73,16 @@ LLM/エージェント関連フラグ:
 - `--agent` (default: false)
 - `--max-agent-steps <int>` (default: 2)
 - `--allow-network` / `--allow-package-install` / `--allow-write-repo` (default: false)
+
+## 許可フラグ早見表
+
+| 操作 | 必要な許可フラグ | 備考 |
+|---|---|---|
+| PDFダウンロード | `--allow-network` | `--download-pdf` と併用 |
+| LLM呼び出し（Gemini） | `--allow-network` | `--llm gemini` と併用 |
+| リポジトリclone/検証 | `--allow-network` | `git` 実行 |
+| 依存導入（pip等） | `--allow-package-install` + `--allow-network` | wheelhouseがあればネット不要 |
+| repoへの書き込み | `--allow-write-repo` | 書き換えが必要な場合 |
 
 ## LLM の安全設計（要点）
 
@@ -82,3 +96,25 @@ LLM/エージェント関連フラグ:
 - `--no-exec` 単体では LLM も PDF も呼びません（後方互換）
 - ネットワークアクセスは `--allow-network` が明示されたときのみ
 - 破壊的コマンドは実行しません
+
+## Troubleshooting（よくある詰まり）
+
+- GitHub認証が必要: `could not read Username for 'https://github.com'`
+- DNS/ネットワークでpipが失敗: `could not resolve host`
+- pytestが無い: `No module named pytest`
+
+## paper-only（参照モード）
+
+run ディレクトリを参照して、facts / insights / applications を生成します（実行なし）。
+
+```bash
+paper2exp paper-only --run runs/<run_id> --lang ja --no-llm
+```
+
+生成物:
+- `paper_only/facts.json`
+- `paper_only/insights.json`
+- `paper_only/applications.json`
+- `paper_only/report.md`
+
+LLM を使う場合は `paper_only/llm_*` に監査ファイルが保存されます。
