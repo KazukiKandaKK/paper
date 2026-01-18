@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paper2exp"
+version = "0.1.0"
+description = "Paper-to-Experiment Agent (MVP)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Paper2Exp"}]
+dependencies = [
+  "typer>=0.9",
+  "pydantic>=2.5",
+  "PyYAML>=6.0",
+  "requests>=2.31",
+  "pypdf>=4.0",
+  "google-genai>=0.3.0",
+  "jsonschema>=4.21.0",
+]
+
+[project.scripts]
+paper2exp = "paper2exp.cli:app"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["paper2exp*"]
+
+[tool.setuptools.package-data]
+paper2exp = ["schemas/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-q"

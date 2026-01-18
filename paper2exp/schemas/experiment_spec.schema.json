@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExperimentSpec",
+  "type": "object",
+  "required": ["paper", "repro", "eval", "bench"],
+  "properties": {
+    "paper": {
+      "type": "object",
+      "required": ["id", "title", "links"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "links": {
+          "type": "object",
+          "properties": {
+            "pdf": {"type": ["string", "null"]},
+            "arxiv": {"type": ["string", "null"]},
+            "hf": {"type": ["string", "null"]}
+          },
+          "additionalProperties": true
+        }
+      }
+    },
+    "repro": {
+      "type": "object",
+      "required": ["repo", "env", "runs"],
+      "properties": {
+        "repo": {
+          "type": "object",
+          "properties": {
+            "url": {"type": ["string", "null"]},
+            "commit": {"type": ["string", "null"]},
+            "candidates": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "python": {"type": "string"},
+            "notes": {"type": "string"}
+          }
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "command"],
+            "properties": {
+              "name": {"type": "string"},
+              "command": {"type": "array", "items": {"type": "string"}},
+              "seeds": {"type": ["array", "null"], "items": {"type": "integer"}}
+            }
+          }
+        }
+      }
+    },
+    "eval": {
+      "type": "object",
+      "properties": {
+        "target_metrics": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "bench": {
+      "type": "object",
+      "properties": {
+        "suites": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}
