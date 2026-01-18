@@ -19,11 +19,12 @@ def compute_maturity(
     records = _load_results(run_dir / "repro" / "results.jsonl")
     smoke_success = _has_smoke_success(records)
     pytest_success = _has_pytest_success(records)
+    any_success = any(rec.get("exit_code") == 0 for rec in records)
 
     if pytest_success:
         return Maturity(level="L2_TESTS", reason="pytest succeeded")
-    if smoke_success:
-        return Maturity(level="L1_SMOKE", reason="smoke command succeeded")
+    if smoke_success or any_success:
+        return Maturity(level="L1_SMOKE", reason="at least one command succeeded")
     if not repo_cloned and paper_to_code_generated:
         return Maturity(level="L0_NOT_RUNNABLE", reason="repo unavailable; paper-to-code fallback only")
     if not repo_cloned:

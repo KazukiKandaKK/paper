@@ -19,6 +19,11 @@ def write_summary(
     repro_reason: str | None = None,
     maturity_level: str | None = None,
     maturity_reason: str | None = None,
+    pytest_required: bool | None = None,
+    pytest_available: bool | None = None,
+    pytest_install_attempted: bool | None = None,
+    pytest_install_ok: bool | None = None,
+    pytest_reason: str | None = None,
 ) -> None:
     run_rel = Path("runs") / run_dir.name
     lines = ["# Run Summary", ""]
@@ -33,6 +38,16 @@ def write_summary(
         lines.append(f"- repro_verified: {repro_verified}")
     if paper_to_code_generated is not None:
         lines.append(f"- paper_to_code_generated: {paper_to_code_generated}")
+    if pytest_required is not None:
+        lines.append(f"- pytest_required: {pytest_required}")
+    if pytest_available is not None:
+        lines.append(f"- pytest_available: {pytest_available}")
+    if pytest_install_attempted is not None:
+        lines.append(f"- pytest_install_attempted: {pytest_install_attempted}")
+    if pytest_install_ok is not None:
+        lines.append(f"- pytest_install_ok: {pytest_install_ok}")
+    if pytest_reason:
+        lines.append(f"- pytest_reason: {pytest_reason}")
     lines.append(f"- exec_ok: {exec_ok} (deprecated; use repro_verified)")
     if notes:
         lines.append(f"- notes: {notes}")

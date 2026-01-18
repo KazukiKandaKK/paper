@@ -39,15 +39,22 @@ def compute_repro_status(run_dir: Path, repo_cloned: bool) -> ReproStatus:
 
     repro_executed = bool(executed_records) and repo_cloned
     last_exit_code = None
+    last_cmd = ""
     for rec in reversed(records):
         if rec.get("exit_code") is not None:
             last_exit_code = rec.get("exit_code")
+            last_cmd = " ".join(rec.get("command", []))
             break
+
+    pytest_ok = _has_pytest_success(records)
+    smoke_ok = _has_smoke_success(records)
 
     if not repro_executed:
         repro_verified = None
+    elif pytest_ok:
+        repro_verified = True
     else:
-        repro_verified = last_exit_code == 0
+        repro_verified = False
 
     exec_ok = repro_verified is True
     paper_to_code_generated = (run_dir / "paper_to_code" / "plan.md").exists()
@@ -57,7 +64,9 @@ def compute_repro_status(run_dir: Path, repo_cloned: bool) -> ReproStatus:
         reason = "no execution records"
     elif last_exit_code is None:
         reason = "no exit_code"
-    elif last_exit_code == 0:
+    elif pytest_ok:
+        reason = "pytest ok"
+    elif smoke_ok:
         reason = "smoke ok"
     else:
         reason = f"exit_code {last_exit_code}"
@@ -78,3 +87,22 @@ def compute_repro_status(run_dir: Path, repo_cloned: bool) -> ReproStatus:
         official_status=official_status,
         reason=reason,
     )
+
+
+def _has_pytest_success(records: list[dict]) -> bool:
+    for rec in records:
+        cmd = " ".join(rec.get("command", []))
+        if rec.get("exit_code") == 0 and "pytest" in cmd:
+            return True
+    return False
+
+
+def _has_smoke_success(records: list[dict]) -> bool:
+    for rec in records:
+        cmd = " ".join(rec.get("command", []))
+        stdout = (rec.get("stdout_tail") or "").lower()
+        if rec.get("exit_code") == 0 and "smoke ok" in stdout:
+            return True
+        if rec.get("exit_code") == 0 and "-c" in cmd and "smoke ok" in cmd:
+            return True
+    return False

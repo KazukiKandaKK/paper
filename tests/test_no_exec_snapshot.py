@@ -71,6 +71,8 @@ def test_no_exec_outputs(monkeypatch, tmp_path: Path):
     assert "## Status" in summary
     assert "- repo_cloned: False" in summary
     assert "- exec_ok: False" in summary
+    assert "- pytest_required: True" in summary
+    assert "- pytest_available: False" in summary
     assert "## Paths" in summary
     assert f"- paper: runs/{run_dir.name}/paper" in summary
     assert f"- repro: runs/{run_dir.name}/repro" in summary

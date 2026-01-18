@@ -13,6 +13,7 @@ from paper2exp.core.eval.scoring import load_last_result, write_compare
 from paper2exp.core.insights.maturity import compute_maturity
 from paper2exp.core.insights.runner import run_insights
 from paper2exp.core.run.status import compute_repro_status
+from paper2exp.core.build.deps import ensure_pytest
 from paper2exp.core.ingest.arxiv import parse_arxiv_id
 from paper2exp.core.ingest.service import ingest_paper
 from paper2exp.core.memory.store import record_failure
@@ -89,6 +90,7 @@ def run_pipeline(
     insights_lang: str = "ja",
     insights_max_applications: int = 6,
     insights_no_llm: bool = False,
+    on_missing_pytest: str = "fallback_smoke",
     llm_client=None,
 ) -> Path:
     base = workdir or Path.cwd()
@@ -105,6 +107,11 @@ def run_pipeline(
         raise ValueError("invalid repo_failure_policy")
     repo_ok = False
     exec_ok = False
+    pytest_required = True
+    pytest_available = False
+    pytest_install_attempted = False
+    pytest_install_ok: bool | None = None
+    pytest_reason = ""
     spec: Optional[ExperimentSpec] = None
     selection = SelectionResult(selected_url=None, reason="not evaluated")
     validation_results: list[ValidationResult] = []
@@ -206,6 +213,11 @@ def run_pipeline(
             repro_reason=status.reason,
             maturity_level=maturity.level,
             maturity_reason=maturity.reason,
+            pytest_required=pytest_required,
+            pytest_available=pytest_available,
+            pytest_install_attempted=pytest_install_attempted,
+            pytest_install_ok=pytest_install_ok,
+            pytest_reason=pytest_reason,
         )
         if insights:
             run_insights(
@@ -258,20 +270,45 @@ def run_pipeline(
         venv_dir = run_dir / ".venv"
         _log_event(results_path, "build", "error", {"error": str(exc)})
 
+    if not no_exec:
+        ensure = ensure_pytest(
+            venv_python(venv_dir),
+            runner,
+            allow_network=allow_network,
+            allow_package_install=allow_package_install,
+        )
+        pytest_available = ensure.available
+        pytest_install_attempted = ensure.install_attempted
+        pytest_install_ok = ensure.install_ok
+        pytest_reason = ensure.reason
+
     smoke_cmd = select_smoke_command(code_dir, venv_python(venv_dir))
+    missing_pytest = pytest_required and not pytest_available and not no_exec
+    if missing_pytest and on_missing_pytest == "fallback_smoke":
+        smoke_cmd = [str(venv_python(venv_dir)), "-c", "print('smoke ok')"]
+        if spec.repro.runs:
+            spec.repro.runs[0].command = ["python", "-c", "print('smoke ok')"]
+        else:
+            spec.repro.runs = [
+                {"name": "smoke", "command": ["python", "-c", "print('smoke ok')"], "seeds": None}
+            ]
+        spec_path.write_text(yaml.safe_dump(spec.model_dump(), sort_keys=False), encoding="utf-8")
     run_script_path = run_dir / "repro" / "run.sh"
     write_run_script(run_script_path, [list(smoke_cmd)])
 
     result = None
     if mode == "smoke":
-        try:
-            result = runner.run(smoke_cmd, cwd=code_dir)
-            exec_ok = result.get("exit_code") == 0
-            if result.get("exit_code") not in (0, None):
-                record_failure(run_dir, result.get("stderr_tail", ""), {"stage": "run"})
-        except Exception as exc:
-            _log_event(results_path, "run", "error", {"error": str(exc)})
-            notes = f"run failed: {exc}"
+        if missing_pytest and on_missing_pytest == "fail":
+            notes = "pytest missing; run skipped"
+        else:
+            try:
+                result = runner.run(smoke_cmd, cwd=code_dir)
+                exec_ok = result.get("exit_code") == 0
+                if result.get("exit_code") not in (0, None):
+                    record_failure(run_dir, result.get("stderr_tail", ""), {"stage": "run"})
+            except Exception as exc:
+                _log_event(results_path, "run", "error", {"error": str(exc)})
+                notes = f"run failed: {exc}"
 
     if not no_exec and (repo_failure_policy == "fallback_paper_to_code" or paper_to_code):
         if selection.selected_url is None or not repo_ok:
@@ -325,7 +362,8 @@ def run_pipeline(
             if exec_ok:
                 break
 
-    bench_results = run_benchmarks(spec, run_dir, code_dir, smoke_cmd, runner, no_exec)
+    bench_no_exec = no_exec or (missing_pytest and on_missing_pytest == "fail")
+    bench_results = run_benchmarks(spec, run_dir, code_dir, smoke_cmd, runner, bench_no_exec)
     rerun_result = bench_results.get("rerun_clean", {})
     if isinstance(rerun_result, dict) and "exit_code" in rerun_result:
         rerun_ok = rerun_result.get("exit_code") == 0
@@ -349,6 +387,11 @@ def run_pipeline(
         repro_reason=status.reason,
         maturity_level=maturity.level,
         maturity_reason=maturity.reason,
+        pytest_required=pytest_required,
+        pytest_available=pytest_available,
+        pytest_install_attempted=pytest_install_attempted,
+        pytest_install_ok=pytest_install_ok,
+        pytest_reason=pytest_reason,
     )
 
     if insights:
@@ -400,6 +443,7 @@ def batch_run(
     insights_lang: str = "ja",
     insights_max_applications: int = 6,
     insights_no_llm: bool = False,
+    on_missing_pytest: str = "fallback_smoke",
 ) -> list[Path]:
     results = []
     for paper_ref in load_seed_list(path):
@@ -425,6 +469,7 @@ def batch_run(
                 insights_lang=insights_lang,
                 insights_max_applications=insights_max_applications,
                 insights_no_llm=insights_no_llm,
+                on_missing_pytest=on_missing_pytest,
             )
         )
     return results

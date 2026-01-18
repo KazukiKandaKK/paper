@@ -33,6 +33,7 @@ def run(
     insights_lang: str = typer.Option("ja", "--insights-lang"),
     insights_max_applications: int = typer.Option(6, "--insights-max-applications"),
     insights_no_llm: bool = typer.Option(False, "--insights-no-llm"),
+    on_missing_pytest: str = typer.Option("fallback_smoke", "--on-missing-pytest"),
 ) -> None:
     """Run a single paper pipeline."""
     if agent and llm != "gemini":
@@ -65,6 +66,7 @@ def run(
         insights_lang=insights_lang,
         insights_max_applications=insights_max_applications,
         insights_no_llm=insights_no_llm,
+        on_missing_pytest=on_missing_pytest,
     )
     typer.echo(str(run_dir))
 
@@ -91,6 +93,7 @@ def batch(
     insights_lang: str = typer.Option("ja", "--insights-lang"),
     insights_max_applications: int = typer.Option(6, "--insights-max-applications"),
     insights_no_llm: bool = typer.Option(False, "--insights-no-llm"),
+    on_missing_pytest: str = typer.Option("fallback_smoke", "--on-missing-pytest"),
 ) -> None:
     """Run pipeline for a list of papers."""
     if agent and llm != "gemini":
@@ -122,6 +125,7 @@ def batch(
         insights_lang=insights_lang,
         insights_max_applications=insights_max_applications,
         insights_no_llm=insights_no_llm,
+        on_missing_pytest=on_missing_pytest,
     )
     for run_dir in results:
         typer.echo(str(run_dir))
